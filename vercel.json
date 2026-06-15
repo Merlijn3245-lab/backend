@@ -1,9 +1,13 @@
 {
-  "version": 2,
-  "builds": [
-    { "src": "api/sign.js", "use": "@vercel/node" }
-  ],
+  "functions": {
+    "api/sign.js": {
+      "runtime": "nodejs18.x"
+    }
+  },
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" }
+    {
+      "src": "/api/sign",
+      "dest": "/api/sign.js"
+    }
   ]
 }
