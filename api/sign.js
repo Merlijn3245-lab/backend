@@ -16,20 +16,16 @@ const CONFIG = {
 function cors(res) {
   const origin = process.env.ALLOWED_ORIGIN || '*';
   res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-res.setHeader(
-  'Access-Control-Allow-Headers',
-  'Content-Type, x-admin-password'
-);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, x-admin-password'
+  );
 }
 
 function requireAdmin(req) {
   const password = req.headers['x-admin-password'];
-
-  return (
-    password &&
-    password === process.env.ADMIN_PASSWORD
-  );
+  return password && password === process.env.ADMIN_PASSWORD;
 }
 
 // ── AWS Signature V4 helpers ──────────────────────────────────────────────────
@@ -74,7 +70,6 @@ function presignedGet(key, expiresIn = 3600 * 24 * 7) {
     'X-Amz-Expires':       String(expiresIn),
     'X-Amz-SignedHeaders': 'host',
   });
-  // Must be sorted
   queryParams.sort();
   const sortedQuery = queryParams.toString();
 
@@ -103,7 +98,6 @@ function signedHeaders({ method, key, contentType, payloadHash, extraQuery = {} 
   const { date, datetime } = getDateStrings();
   const host = new URL(CONFIG.endpoint).host;
 
-  // For LIST (key is empty, request goes to bucket root)
   const canonicalUri = key ? `/${CONFIG.bucket}/${encodeKey(key)}` : `/${CONFIG.bucket}/`;
 
   const sortedQueryEntries = Object.entries(extraQuery)
@@ -131,7 +125,6 @@ function signedHeaders({ method, key, contentType, payloadHash, extraQuery = {} 
 
   const authorization = `AWS4-HMAC-SHA256 Credential=${CONFIG.accessKey}/${credentialScope}, SignedHeaders=${signedHeadersList}, Signature=${signature}`;
 
-  // Return everything the browser needs to make the actual request
   const responseHeaders = {
     'x-amz-content-sha256': hash,
     'x-amz-date':           datetime,
@@ -146,8 +139,16 @@ function signedHeaders({ method, key, contentType, payloadHash, extraQuery = {} 
 // ── Main handler ──────────────────────────────────────────────────────────────
 module.exports = async function handler(req, res) {
   cors(res);
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // Only allow POST
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   if (!CONFIG.accessKey || !CONFIG.secretKey || !CONFIG.bucket) {
     return res.status(500).json({ error: 'Server credentials not configured' });
@@ -164,51 +165,56 @@ module.exports = async function handler(req, res) {
 
   try {
     switch (action) {
-      // Frontend wants a presigned download URL
       case 'presign-get': {
         if (!key) return res.status(400).json({ error: 'key required' });
         const url = presignedGet(key, expiresIn);
         return res.status(200).json({ url });
       }
 
-      // Frontend wants signed headers for a PUT upload
       case 'sign-put': {
         if (!key) return res.status(400).json({ error: 'key required' });
         const result = signedHeaders({ method: 'PUT', key, contentType, payloadHash });
         return res.status(200).json(result);
       }
 
-      // Frontend wants signed headers for a DELETE
       case 'sign-delete': {
         if (!key) return res.status(400).json({ error: 'key required' });
         const result = signedHeaders({ method: 'DELETE', key, payloadHash: sha256hex('') });
         return res.status(200).json(result);
       }
 
-      // Frontend wants signed headers for a LIST
       case 'sign-list': {
         const result = signedHeaders({ method: 'GET', key: '', extraQuery: extraQuery || {} });
         return res.status(200).json(result);
       }
 
-      // Frontend wants signed headers to initiate multipart upload
       case 'sign-multipart-init': {
         if (!key) return res.status(400).json({ error: 'key required' });
         const result = signedHeaders({ method: 'POST', key, contentType, extraQuery: { uploads: '' } });
         return res.status(200).json(result);
       }
 
-      // Frontend wants signed headers for a multipart part PUT
       case 'sign-multipart-part': {
-        if (!key || !body.partNumber || !body.uploadId) return res.status(400).json({ error: 'key, partNumber, uploadId required' });
-        const result = signedHeaders({ method: 'PUT', key, payloadHash, extraQuery: { partNumber: String(body.partNumber), uploadId: body.uploadId } });
+        if (!key || !body.partNumber || !body.uploadId)
+          return res.status(400).json({ error: 'key, partNumber, uploadId required' });
+        const result = signedHeaders({
+          method: 'PUT',
+          key,
+          payloadHash,
+          extraQuery: { partNumber: String(body.partNumber), uploadId: body.uploadId }
+        });
         return res.status(200).json(result);
       }
 
-      // Frontend wants signed headers to complete multipart upload
       case 'sign-multipart-complete': {
-        if (!key || !body.uploadId) return res.status(400).json({ error: 'key, uploadId required' });
-        const result = signedHeaders({ method: 'POST', key, contentType: 'application/xml', extraQuery: { uploadId: body.uploadId } });
+        if (!key || !body.uploadId)
+          return res.status(400).json({ error: 'key, uploadId required' });
+        const result = signedHeaders({
+          method: 'POST',
+          key,
+          contentType: 'application/xml',
+          extraQuery: { uploadId: body.uploadId }
+        });
         return res.status(200).json(result);
       }
 
